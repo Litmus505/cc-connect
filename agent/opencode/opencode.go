@@ -250,14 +250,108 @@ func (a *Agent) providerEnvLocked() []string {
 	return env
 }
 
+// -- HistoryProvider --
+
+type opencodeExportData struct {
+	Messages []opencodeExportMessage `json:"messages"`
+}
+
+type opencodeExportMessage struct {
+	Info struct {
+		Role string `json:"role"`
+		Time struct {
+			Created int64 `json:"created"`
+		} `json:"time"`
+	} `json:"info"`
+	Parts []opencodeExportPart `json:"parts"`
+}
+
+type opencodeExportPart struct {
+	Type  string `json:"type"`
+	Text  string `json:"text,omitempty"`
+	Tool  string `json:"tool,omitempty"`
+	State *struct {
+		Input  map[string]any `json:"input,omitempty"`
+		Output string         `json:"output,omitempty"`
+	} `json:"state,omitempty"`
+}
+
+func (a *Agent) GetSessionHistory(_ context.Context, sessionID string, limit int) ([]core.HistoryEntry, error) {
+	c := exec.Command(a.cmd, "export", sessionID)
+	c.Dir = a.GetWorkDir()
+
+	out, err := c.Output()
+	if err != nil {
+		return nil, fmt.Errorf("opencode: export session: %w", err)
+	}
+
+	outStr := string(out)
+	idx := strings.Index(outStr, "{")
+	if idx < 0 {
+		return nil, fmt.Errorf("opencode: no JSON found in export output")
+	}
+
+	var data opencodeExportData
+	if err := json.Unmarshal([]byte(outStr[idx:]), &data); err != nil {
+		return nil, fmt.Errorf("opencode: parse export JSON: %w", err)
+	}
+
+	var entries []core.HistoryEntry
+	for _, msg := range data.Messages {
+		var sb strings.Builder
+		for _, p := range msg.Parts {
+			switch p.Type {
+			case "text":
+				if p.Text != "" {
+					sb.WriteString(p.Text)
+				}
+			case "tool":
+				sb.WriteString(fmt.Sprintf("\n> 🔧 Tool: %s", p.Tool))
+				if p.State != nil && p.State.Input != nil {
+					if cmd, ok := p.State.Input["command"]; ok {
+						sb.WriteString(fmt.Sprintf(" `%v`", cmd))
+					} else if query, ok := p.State.Input["query"]; ok {
+						sb.WriteString(fmt.Sprintf(" `%v`", query))
+					} else if pattern, ok := p.State.Input["pattern"]; ok {
+						sb.WriteString(fmt.Sprintf(" `%v`", pattern))
+						if path, ok := p.State.Input["path"]; ok {
+							sb.WriteString(fmt.Sprintf(" in %v", path))
+						}
+					}
+				}
+				sb.WriteString("\n")
+			}
+		}
+
+		text := strings.TrimSpace(sb.String())
+		if text == "" {
+			continue
+		}
+
+		entries = append(entries, core.HistoryEntry{
+			Role:      msg.Info.Role,
+			Content:   text,
+			Timestamp: time.UnixMilli(msg.Info.Time.Created),
+		})
+	}
+
+	if limit > 0 && limit < len(entries) {
+		entries = entries[len(entries)-limit:]
+	}
+
+	return entries, nil
+}
+
 // -- Session listing --
 
 // opencodeSessionEntry represents a session from `opencode session list` output.
 type opencodeSessionEntry struct {
-	ID      string `json:"id"`
-	Title   string `json:"title"`
-	Updated int64  `json:"updated"` // Unix timestamp in milliseconds
-	Created int64  `json:"created"`
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Updated   int64  `json:"updated"` // Unix timestamp in milliseconds
+	Created   int64  `json:"created"`
+	ProjectID string `json:"projectId"`
+	Directory string `json:"directory"`
 }
 
 func listOpencodeSessions(cmd, workDir string) ([]core.AgentSessionInfo, error) {
@@ -274,10 +368,26 @@ func listOpencodeSessions(cmd, workDir string) ([]core.AgentSessionInfo, error) 
 		return nil, fmt.Errorf("opencode: parse session list: %w", err)
 	}
 
+	absWorkDir, err := filepath.Abs(workDir)
+	if err != nil {
+		absWorkDir = workDir
+	}
+
 	msgCounts := querySessionMessageCounts()
 
 	var sessions []core.AgentSessionInfo
 	for _, e := range entries {
+		// Filter by directory if available
+		if e.Directory != "" {
+			absEntryDir, err := filepath.Abs(e.Directory)
+			if err != nil {
+				absEntryDir = e.Directory
+			}
+			if !strings.EqualFold(absEntryDir, absWorkDir) {
+				continue
+			}
+		}
+
 		sessions = append(sessions, core.AgentSessionInfo{
 			ID:           e.ID,
 			Summary:      e.Title,

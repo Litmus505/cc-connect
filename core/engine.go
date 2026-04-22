@@ -4317,9 +4317,10 @@ func (e *Engine) cmdHistory(p Platform, msg *Message, args []string) {
 		n = v
 	}
 
-	entries := s.GetHistory(n)
+	// entries := s.GetHistory(n) // Skip session cache, always use opencode export
 	agentSID := s.GetAgentSessionID()
-	if len(entries) == 0 && agentSID != "" {
+	var entries []HistoryEntry
+	if agentSID != "" {
 		if hp, ok := agent.(HistoryProvider); ok {
 			if agentEntries, err := hp.GetSessionHistory(e.ctx, agentSID, n); err == nil {
 				entries = agentEntries
@@ -4340,8 +4341,8 @@ func (e *Engine) cmdHistory(p Platform, msg *Message, args []string) {
 			icon = "🤖"
 		}
 		content := h.Content
-		if len([]rune(content)) > 200 {
-			content = string([]rune(content)[:200]) + "..."
+		if len([]rune(content)) > 2000 {
+			content = string([]rune(content)[:2000]) + "..."
 		}
 		sb.WriteString(fmt.Sprintf("%s [%s]\n%s\n\n", icon, h.Timestamp.Format("15:04:05"), content))
 	}
@@ -6918,10 +6919,10 @@ func (e *Engine) renderCurrentCard(sessionKey string) *Card {
 func (e *Engine) renderHistoryCard(sessionKey string) *Card {
 	agent, sessions := e.sessionContextForKey(sessionKey)
 	s := sessions.GetOrCreateActive(sessionKey)
-	entries := s.GetHistory(10)
-
+	// entries := s.GetHistory(10) // Skip session cache, always use opencode export
 	agentSID := s.GetAgentSessionID()
-	if len(entries) == 0 && agentSID != "" {
+	var entries []HistoryEntry
+	if agentSID != "" {
 		if hp, ok := agent.(HistoryProvider); ok {
 			if agentEntries, err := hp.GetSessionHistory(e.ctx, agentSID, 10); err == nil {
 				entries = agentEntries
@@ -6940,8 +6941,8 @@ func (e *Engine) renderHistoryCard(sessionKey string) *Card {
 			icon = "🤖"
 		}
 		content := h.Content
-		if len([]rune(content)) > 200 {
-			content = string([]rune(content)[:200]) + "..."
+		if len([]rune(content)) > 2000 {
+			content = string([]rune(content)[:2000]) + "..."
 		}
 		sb.WriteString(fmt.Sprintf("%s [%s]\n%s\n\n", icon, h.Timestamp.Format("15:04:05"), content))
 	}
