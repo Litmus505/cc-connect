@@ -108,6 +108,29 @@ func (a *Agent) AvailableModels(_ context.Context) []core.ModelOption {
 	if models := a.configuredModels(); len(models) > 0 {
 		return models
 	}
+
+	// Try to get models from CLI
+	c := exec.Command(a.cmd, "models")
+	c.Dir = a.GetWorkDir()
+	out, err := c.Output()
+	if err == nil {
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		var models []core.ModelOption
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line != "" {
+				models = append(models, core.ModelOption{
+					Name: line,
+					Desc: line,
+				})
+			}
+		}
+		if len(models) > 0 {
+			return models
+		}
+	}
+
+	// Fallback to defaults if CLI fails
 	return []core.ModelOption{
 		{Name: "anthropic/claude-sonnet-4-20250514", Desc: "Claude Sonnet 4 (default)"},
 		{Name: "anthropic/claude-opus-4-20250514", Desc: "Claude Opus 4"},
